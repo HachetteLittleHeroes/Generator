@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор раскрасок</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 20px;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .upload-btn {
+            display: block;
+            width: 100%;
+            padding: 16px;
+            background: #2a2a2a;
+            border: 2px dashed #555;
+            border-radius: 12px;
+            text-align: center;
+            cursor: pointer;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #ccc;
+        }
+        .upload-btn.has-file {
+            border-color: #4CAF50;
+            color: #4CAF50;
+        }
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        .range-value {
+            text-align: right;
+            font-size: 14px;
+            color: #4CAF50;
+            margin-top: -16px;
+            margin-bottom: 16px;
+        }
+        button {
+            width: 100%;
+            padding: 16px;
+            background: #4CAF50;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #fff;
+        }
+        button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+        #status {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 14px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Генератор раскрасок</h1>
+
+        <label for="image">Изображение</label>
+        <label class="upload-btn" id="uploadLabel" for="image">
+            📁 Нажмите, чтобы выбрать фото
+        </label>
+        <input type="file" id="image" accept="image/*">
+
+        <label for="detail">Детализация</label>
+        <input type="range" id="detail" min="100" max="800" value="300" step="10">
+        <div class="range-value" id="detailValue">300</div>
+
+        <label for="compactness">Причудливость форм</label>
+        <input type="range" id="compactness" min="5" max="50" value="20" step="1">
+        <div class="range-value" id="compactnessValue">20</div>
+
+        <button id="generateBtn" disabled>Сгенерировать PDF</button>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        const API_URL = 'https://generat-hachettelittleheroes.amvera.io';
+
+        const imageInput = document.getElementById('image');
+        const uploadLabel = document.getElementById('uploadLabel');
+        const detailSlider = document.getElementById('detail');
+        const detailValue = document.getElementById('detailValue');
+        const compactnessSlider = document.getElementById('compactness');
+        const compactnessValue = document.getElementById('compactnessValue');
+        const generateBtn = document.getElementById('generateBtn');
+        const statusDiv = document.getElementById('status');
+
+        let selectedFile = null;
+
+        imageInput.addEventListener('change', (e) => {
+            selectedFile = e.target.files[0];
+            if (selectedFile) {
+                uploadLabel.textContent = '✅ ' + selectedFile.name;
+                uploadLabel.classList.add('has-file');
+                generateBtn.disabled = false;
+            } else {
+                uploadLabel.textContent = '📁 Нажмите, чтобы выбрать фото';
+                uploadLabel.classList.remove('has-file');
+                generateBtn.disabled = true;
+            }
+        });
+
+        detailSlider.addEventListener('input', () => {
+            detailValue.textContent = detailSlider.value;
+        });
+
+        compactnessSlider.addEventListener('input', () => {
+            compactnessValue.textContent = compactnessSlider.value;
+        });
+
+        generateBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            generateBtn.disabled = true;
+            generateBtn.textContent = 'Обработка...';
+            statusDiv.textContent = 'Отправляю изображение...';
+
+            const formData = new FormData();
+            formData.append('image', selectedFile);
+            formData.append('detail', detailSlider.value);
+            formData.append('compactness', compactnessSlider.value);
+
+            try {
+                statusDiv.textContent = 'Генерирую раскраску... (это может занять 10-30 секунд)';
+
+                const response = await fetch(API_URL + '/generate', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) throw new Error('Ошибка сервера');
+
+                const blob = await response.blob();
+
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'coloring_page.pdf';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+
+                statusDiv.textContent = '✅ Готово! PDF скачан.';
+            } catch (error) {
+                statusDiv.textContent = '❌ Ошибка: ' + error.message;
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.textContent = 'Сгенерировать PDF';
+            }
+        });
+    </script>
+</body>
+</html>
