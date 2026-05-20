@@ -2,17 +2,22 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Генератор раскрасок</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         body {
-            font-family: -apple-system, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #1a1a1a;
             color: #fff;
-            margin: 0;
             padding: 20px;
-            box-sizing: border-box;
+            min-height: 100vh;
         }
         .container {
             max-width: 400px;
@@ -44,21 +49,58 @@
             margin-bottom: 20px;
             font-size: 14px;
             color: #ccc;
+            transition: all 0.2s;
         }
         .upload-btn.has-file {
             border-color: #4CAF50;
             color: #4CAF50;
         }
-        input[type="range"] {
+        .preview-container {
             width: 100%;
             margin-bottom: 20px;
+            border-radius: 12px;
+            overflow: hidden;
+            display: none;
+            background: #fff;
+        }
+        .preview-container.visible {
+            display: block;
+        }
+        canvas {
+            width: 100%;
+            display: block;
+        }
+        .slider-group {
+            margin-bottom: 16px;
+        }
+        input[type="range"] {
+            width: 100%;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+            border: 2px solid #fff;
+        }
+        .range-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .range-value {
-            text-align: right;
             font-size: 14px;
             color: #4CAF50;
-            margin-top: -16px;
-            margin-bottom: 16px;
+            font-weight: 600;
         }
         button {
             width: 100%;
@@ -70,17 +112,25 @@
             font-weight: 600;
             cursor: pointer;
             color: #fff;
+            transition: all 0.2s;
+            margin-bottom: 12px;
         }
         button:disabled {
             background: #333;
             color: #666;
             cursor: not-allowed;
         }
+        button.secondary {
+            background: transparent;
+            border: 1px solid #4CAF50;
+            color: #4CAF50;
+        }
         #status {
             text-align: center;
-            margin-top: 16px;
             font-size: 14px;
             color: #aaa;
+            min-height: 20px;
+            margin-top: 8px;
         }
     </style>
 </head>
@@ -94,15 +144,28 @@
         </label>
         <input type="file" id="image" accept="image/*">
 
-        <label for="detail">Детализация</label>
-        <input type="range" id="detail" min="100" max="800" value="300" step="10">
-        <div class="range-value" id="detailValue">300</div>
+        <div class="preview-container" id="previewContainer">
+            <canvas id="previewCanvas"></canvas>
+        </div>
 
-        <label for="compactness">Причудливость форм</label>
-        <input type="range" id="compactness" min="5" max="50" value="20" step="1">
-        <div class="range-value" id="compactnessValue">20</div>
+        <div class="slider-group">
+            <div class="range-header">
+                <label for="detail">Детализация</label>
+                <span class="range-value" id="detailValue">300</span>
+            </div>
+            <input type="range" id="detail" min="100" max="800" value="300" step="10">
+        </div>
 
-        <button id="generateBtn" disabled>Сгенерировать PDF</button>
+        <div class="slider-group">
+            <div class="range-header">
+                <label for="compactness">Причудливость форм</label>
+                <span class="range-value" id="compactnessValue">20</span>
+            </div>
+            <input type="range" id="compactness" min="5" max="50" value="20" step="1">
+        </div>
+
+        <button id="previewBtn" disabled>👁 Предпросмотр</button>
+        <button id="downloadBtn" disabled class="secondary">📥 Скачать PDF</button>
         <div id="status"></div>
     </div>
 
@@ -111,29 +174,32 @@
         tg.ready();
         tg.expand();
 
-        const API_URL = 'https://generat-hachettelittleheroes.amvera.io';
-
         const imageInput = document.getElementById('image');
         const uploadLabel = document.getElementById('uploadLabel');
+        const previewContainer = document.getElementById('previewContainer');
+        const previewCanvas = document.getElementById('previewCanvas');
         const detailSlider = document.getElementById('detail');
         const detailValue = document.getElementById('detailValue');
         const compactnessSlider = document.getElementById('compactness');
         const compactnessValue = document.getElementById('compactnessValue');
-        const generateBtn = document.getElementById('generateBtn');
+        const previewBtn = document.getElementById('previewBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
         const statusDiv = document.getElementById('status');
 
         let selectedFile = null;
+        let currentColoringDataUrl = null;
 
+        // --- Обработчики UI ---
         imageInput.addEventListener('change', (e) => {
             selectedFile = e.target.files[0];
             if (selectedFile) {
                 uploadLabel.textContent = '✅ ' + selectedFile.name;
                 uploadLabel.classList.add('has-file');
-                generateBtn.disabled = false;
-            } else {
-                uploadLabel.textContent = '📁 Нажмите, чтобы выбрать фото';
-                uploadLabel.classList.remove('has-file');
-                generateBtn.disabled = true;
+                previewBtn.disabled = false;
+                downloadBtn.disabled = false;
+                currentColoringDataUrl = null;
+                previewContainer.classList.remove('visible');
+                statusDiv.textContent = '';
             }
         });
 
@@ -145,45 +211,288 @@
             compactnessValue.textContent = compactnessSlider.value;
         });
 
-        generateBtn.addEventListener('click', async () => {
+        // --- Ядро: SLIC-подобная сегментация на Canvas ---
+        function simpleSegmentation(imageData, numRegions, compactness) {
+            const { data, width, height } = imageData;
+            const pixels = new Uint8ClampedArray(data);
+            const totalPixels = width * height;
+
+            // Шаг сетки суперпикселей
+            const step = Math.round(Math.sqrt(totalPixels / numRegions));
+            const S = Math.max(step, 4);
+
+            // Инициализация центров кластеров
+            const centers = [];
+            for (let y = S; y < height - S; y += S) {
+                for (let x = S; x < width - S; x += S) {
+                    const idx = (y * width + x) * 4;
+                    centers.push({
+                        x: x,
+                        y: y,
+                        l: pixels[idx],
+                        a: pixels[idx + 1],
+                        b: pixels[idx + 2]
+                    });
+                }
+            }
+
+            const labels = new Int32Array(totalPixels).fill(-1);
+            const distances = new Float32Array(totalPixels).fill(Infinity);
+
+            // Несколько итераций k-means
+            const maxIter = 5;
+            for (let iter = 0; iter < maxIter; iter++) {
+                distances.fill(Infinity);
+
+                for (let c = 0; c < centers.length; c++) {
+                    const center = centers[c];
+                    const xMin = Math.max(0, center.x - S * 2);
+                    const xMax = Math.min(width - 1, center.x + S * 2);
+                    const yMin = Math.max(0, center.y - S * 2);
+                    const yMax = Math.min(height - 1, center.y + S * 2);
+
+                    for (let y = yMin; y <= yMax; y++) {
+                        for (let x = xMin; x <= xMax; x++) {
+                            const idx = y * width + x;
+                            const pxIdx = idx * 4;
+
+                            const dl = pixels[pxIdx] - center.l;
+                            const da = pixels[pxIdx + 1] - center.a;
+                            const db = pixels[pxIdx + 2] - center.b;
+                            const colorDist = Math.sqrt(dl * dl + da * da + db * db);
+
+                            const dx = x - center.x;
+                            const dy = y - center.y;
+                            const spatialDist = Math.sqrt(dx * dx + dy * dy);
+
+                            const m = compactness;
+                            const dist = colorDist + (m / S) * spatialDist;
+
+                            if (dist < distances[idx]) {
+                                distances[idx] = dist;
+                                labels[idx] = c;
+                            }
+                        }
+                    }
+                }
+
+                // Обновление центров
+                const counts = new Int32Array(centers.length).fill(0);
+                const sums = new Array(centers.length).fill(null).map(() => ({ x: 0, y: 0, l: 0, a: 0, b: 0 }));
+
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const idx = y * width + x;
+                        const label = labels[idx];
+                        if (label >= 0) {
+                            counts[label]++;
+                            const pxIdx = idx * 4;
+                            sums[label].x += x;
+                            sums[label].y += y;
+                            sums[label].l += pixels[pxIdx];
+                            sums[label].a += pixels[pxIdx + 1];
+                            sums[label].b += pixels[pxIdx + 2];
+                        }
+                    }
+                }
+
+                for (let c = 0; c < centers.length; c++) {
+                    if (counts[c] > 0) {
+                        centers[c].x = Math.round(sums[c].x / counts[c]);
+                        centers[c].y = Math.round(sums[c].y / counts[c]);
+                        centers[c].l = Math.round(sums[c].l / counts[c]);
+                        centers[c].a = Math.round(sums[c].a / counts[c]);
+                        centers[c].b = Math.round(sums[c].b / counts[c]);
+                    }
+                }
+            }
+
+            return { labels, centers, width, height };
+        }
+
+        function findBoundaries(labels, width, height) {
+            const edges = new Uint8ClampedArray(width * height * 4);
+            const boundarySet = new Uint8Array(width * height);
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = y * width + x;
+                    const label = labels[idx];
+
+                    if (label !== labels[idx - 1] ||
+                        label !== labels[idx + 1] ||
+                        label !== labels[idx - width] ||
+                        label !== labels[idx + width]) {
+                        boundarySet[idx] = 1;
+                    }
+                }
+            }
+
+            // Утолщение границ
+            const thick = new Uint8Array(width * height);
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = y * width + x;
+                    if (boundarySet[idx]) {
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dx = -1; dx <= 1; dx++) {
+                                thick[(y + dy) * width + (x + dx)] = 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return thick;
+        }
+
+        function generateColoring(imageData, numRegions, compactness) {
+            const { labels, width, height } = simpleSegmentation(imageData, numRegions, compactness);
+            const boundaries = findBoundaries(labels, width, height);
+
+            const output = new Uint8ClampedArray(width * height * 4);
+
+            for (let i = 0; i < width * height; i++) {
+                const pxIdx = i * 4;
+                if (boundaries[i]) {
+                    output[pxIdx] = 0;
+                    output[pxIdx + 1] = 0;
+                    output[pxIdx + 2] = 0;
+                    output[pxIdx + 3] = 255;
+                } else {
+                    output[pxIdx] = 255;
+                    output[pxIdx + 1] = 255;
+                    output[pxIdx + 2] = 255;
+                    output[pxIdx + 3] = 255;
+                }
+            }
+
+            return new ImageData(output, width, height);
+        }
+
+        function loadImage(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                    img.src = e.target.result;
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function processImage(img, detail, compactness) {
+            // Масштабирование для производительности
+            const MAX_SIZE = 800;
+            let w = img.width;
+            let h = img.height;
+            if (Math.max(w, h) > MAX_SIZE) {
+                const scale = MAX_SIZE / Math.max(w, h);
+                w = Math.round(w * scale);
+                h = Math.round(h * scale);
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const numRegions = parseInt(detail);
+            const comp = parseInt(compactness);
+
+            return generateColoring(imageData, numRegions, comp);
+        }
+
+        // --- Генерация и предпросмотр ---
+        previewBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
 
-            generateBtn.disabled = true;
-            generateBtn.textContent = 'Обработка...';
-            statusDiv.textContent = 'Отправляю изображение...';
-
-            const formData = new FormData();
-            formData.append('image', selectedFile);
-            formData.append('detail', detailSlider.value);
-            formData.append('compactness', compactnessSlider.value);
+            previewBtn.disabled = true;
+            downloadBtn.disabled = true;
+            statusDiv.textContent = 'Обрабатываю изображение... (это может занять 5-20 секунд)';
 
             try {
-                statusDiv.textContent = 'Генерирую раскраску... (это может занять 10-30 секунд)';
+                const img = await loadImage(selectedFile);
+                const coloringData = processImage(img, detailSlider.value, compactnessSlider.value);
 
-                const response = await fetch(API_URL + '/generate', {
-                    method: 'POST',
-                    body: formData,
-                });
+                previewCanvas.width = coloringData.width;
+                previewCanvas.height = coloringData.height;
+                const ctx = previewCanvas.getContext('2d');
+                ctx.putImageData(coloringData, 0, 0);
 
-                if (!response.ok) throw new Error('Ошибка сервера');
-
-                const blob = await response.blob();
-
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'coloring_page.pdf';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
-
-                statusDiv.textContent = '✅ Готово! PDF скачан.';
+                previewContainer.classList.add('visible');
+                currentColoringDataUrl = previewCanvas.toDataURL('image/png');
+                statusDiv.textContent = '✅ Предпросмотр готов. Можно скачать PDF.';
+                downloadBtn.disabled = false;
             } catch (error) {
                 statusDiv.textContent = '❌ Ошибка: ' + error.message;
             } finally {
-                generateBtn.disabled = false;
-                generateBtn.textContent = 'Сгенерировать PDF';
+                previewBtn.disabled = false;
+            }
+        });
+
+        // --- Скачивание PDF ---
+        downloadBtn.addEventListener('click', async () => {
+            if (!currentColoringDataUrl) {
+                // Сначала генерируем
+                statusDiv.textContent = 'Сначала нажмите "Предпросмотр"...';
+                return;
+            }
+
+            downloadBtn.disabled = true;
+            statusDiv.textContent = 'Собираю PDF...';
+
+            try {
+                const { jsPDF } = window.jspdf;
+
+                const img = new Image();
+                await new Promise((resolve) => {
+                    img.onload = resolve;
+                    img.src = currentColoringDataUrl;
+                });
+
+                // A4 в точках (72 dpi)
+                const pdf = new jsPDF({
+                    orientation: img.width > img.height ? 'landscape' : 'portrait',
+                    unit: 'mm',
+                    format: 'a4'
+                });
+
+                const pageWidth = pdf.internal.pageSize.getWidth();
+                const pageHeight = pdf.internal.pageSize.getHeight();
+                const margin = 10;
+
+                const availableWidth = pageWidth - margin * 2;
+                const availableHeight = pageHeight - margin * 2;
+
+                const imgRatio = img.width / img.height;
+                const pageRatio = availableWidth / availableHeight;
+
+                let drawWidth, drawHeight;
+                if (imgRatio > pageRatio) {
+                    drawWidth = availableWidth;
+                    drawHeight = availableWidth / imgRatio;
+                } else {
+                    drawHeight = availableHeight;
+                    drawWidth = availableHeight * imgRatio;
+                }
+
+                const x = margin + (availableWidth - drawWidth) / 2;
+                const y = margin + (availableHeight - drawHeight) / 2;
+
+                pdf.addImage(currentColoringDataUrl, 'PNG', x, y, drawWidth, drawHeight);
+                pdf.save('coloring_page.pdf');
+
+                statusDiv.textContent = '✅ PDF скачан!';
+            } catch (error) {
+                statusDiv.textContent = '❌ Ошибка PDF: ' + error.message;
+            } finally {
+                downloadBtn.disabled = false;
             }
         });
     </script>
